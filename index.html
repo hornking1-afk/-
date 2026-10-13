@@ -1,0 +1,1355 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0e1012">
+<title>MR 큐 데크</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* 무대 뒤 음향 부스용 어두운 화면: 왼쪽 곡 목록 / 오른쪽 데크(현재 곡, 파형, 트랜스포트, 편집) */
+:root{
+  --bg:#0e1012; --panel:#161a1d; --panel2:#1e2327; --line:#2c3238;
+  --fg:#ece9e3; --dim:#8e959c; --faint:#5b636a;
+  --amber:#f0a640; --go:#43c97a; --stop:#e5574d; --vamp:#a993f2;
+  --wave:#4a535b; --played:#c9cdd1;
+  --sans:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--sans);-webkit-tap-highlight-color:transparent}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--dim)}
+
+/* 상단 */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 16px;padding-top:calc(10px + env(safe-area-inset-top,0px));border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{display:flex;align-items:center;gap:10px;min-width:0}
+.brand .lamp{width:10px;height:10px;border-radius:50%;background:var(--faint);flex:none}
+.brand .lamp.on{background:var(--go);box-shadow:0 0 10px var(--go)}
+.brand b{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand .muted{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sync{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;flex:none}
+.sync.ok{color:var(--go);border-color:color-mix(in srgb,var(--go) 45%,var(--line))}
+.sync.busy{color:var(--amber)}
+.sync.err{color:var(--stop);border-color:color-mix(in srgb,var(--stop) 45%,var(--line))}
+.ro-note{font-size:13px;color:var(--dim);padding:10px 12px;border:1px dashed var(--line);border-radius:10px}
+body.readonly .editor{display:none}
+body:not(.readonly) .ro-note,body.locked .ro-note{display:none}
+@media (max-width:860px){.sync{display:none}}
+.top-actions{display:flex;gap:8px;flex:none}
+.chip{border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:5px 12px;font-size:13px}
+.chip.on{border-color:var(--amber);color:var(--amber)}
+
+/* 레이아웃 */
+.layout{display:grid;grid-template-columns:minmax(260px,330px) 1fr;min-height:calc(100% - 52px)}
+.list-panel{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0}
+.list-head{display:flex;justify-content:space-between;align-items:baseline;padding:14px 16px 6px;font-size:12px;letter-spacing:.08em;color:var(--dim)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 10px}
+.chips:empty{display:none}
+.tracks{list-style:none;margin:0;padding:0 8px 16px;overflow-y:auto;flex:1}
+.trk{display:grid;grid-template-columns:44px 1fr auto auto;align-items:center;gap:8px;padding:9px 8px;border-radius:8px;cursor:pointer;border:1px solid transparent}
+.trk:hover{background:var(--panel2)}
+.trk .no{font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+.trk .ttl{min-width:0}
+.trk .ttl b{display:block;font-weight:500;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trk .ttl small{display:block;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trk .st{font-family:var(--mono);font-size:11px;color:var(--faint);min-width:30px;text-align:right}
+.trk .st.ok{color:var(--go)}
+.trk .st.err{color:var(--stop)}
+.trk .play{border:0;background:none;color:var(--dim);font-size:13px;padding:4px 6px;border-radius:6px}
+.trk .play:hover{color:var(--fg);background:var(--line)}
+body.locked .trk .play{visibility:hidden}
+.trk.standby{border-color:var(--amber);background:color-mix(in srgb,var(--amber) 9%,transparent)}
+.trk.standby .no{color:var(--amber)}
+.trk.playing{border-color:var(--go);background:color-mix(in srgb,var(--go) 11%,transparent)}
+.trk.playing .no{color:var(--go)}
+.list-empty{padding:16px;color:var(--dim);font-size:14px}
+
+/* 데크 */
+.deck{padding:18px 20px 24px;display:flex;flex-direction:column;gap:14px;min-width:0}
+.now{display:flex;flex-direction:column;gap:4px}
+.now-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.badge{font-size:12px;font-weight:700;letter-spacing:.08em;padding:3px 10px;border-radius:4px;background:var(--panel2);color:var(--dim)}
+.badge.standby{background:var(--amber);color:#1a1205}
+.badge.playing{background:var(--go);color:#06170d}
+.badge.vamp{background:var(--vamp);color:#140d2b}
+.badge.paused{background:var(--fg);color:var(--bg)}
+.now-no{font-family:var(--mono);color:var(--dim);font-size:14px}
+.now-cast{font-size:13px;color:var(--dim)}
+#nowTitle{margin:2px 0 0;font-size:clamp(22px,3.4vw,34px);line-height:1.2;font-weight:700;text-wrap:balance}
+.memo{margin:2px 0 0;color:var(--amber);font-size:15px;white-space:pre-wrap}
+.memo:empty{display:none}
+.clock{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-top:6px}
+#tElapsed{font-size:clamp(34px,6vw,54px);font-weight:600;line-height:1}
+#tTotal{font-size:18px;color:var(--dim)}
+#tRemain{font-size:18px;color:var(--fg);margin-left:auto}
+.nextgo{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border-radius:8px;background:var(--panel);border:1px solid var(--line);font-size:14px}
+.nextgo .lbl{font-family:var(--mono);font-weight:600;font-size:12px;color:var(--go);letter-spacing:.06em}
+#eventCountdown{margin-left:auto;color:var(--dim)}
+#eventCountdown.vamp{color:var(--vamp);font-weight:500}
+
+.wave-wrap{position:relative;height:150px;border-radius:10px;background:var(--panel);border:1px solid var(--line);touch-action:none}
+#wave{display:block;width:100%;height:100%;cursor:pointer}
+body.locked #wave{cursor:default}
+.wave-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:14px;pointer-events:none;text-align:center;padding:0 16px}
+.wave-msg:empty{display:none}
+.hover-time{position:absolute;top:6px;padding:1px 6px;border-radius:4px;background:var(--fg);color:var(--bg);font-family:var(--mono);font-size:12px;pointer-events:none;transform:translateX(-50%)}
+
+.transport{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.tbtn{border:1px solid var(--line);background:var(--panel2);border-radius:10px;padding:12px 6px;font-weight:500;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:62px;justify-content:center}
+.tbtn small{font-family:var(--mono);font-size:11px;color:var(--dim);font-weight:500}
+.tbtn:active{transform:translateY(1px)}
+.tbtn.go{background:var(--go);border-color:var(--go);color:#04140a;font-size:22px;font-weight:700;letter-spacing:.06em}
+.tbtn.go small{color:#0d3a20}
+.tbtn.stop{border-color:color-mix(in srgb,var(--stop) 60%,var(--line));color:#ffb3ad}
+.tbtn.flash{animation:flash .35s ease-out}
+@keyframes flash{from{box-shadow:0 0 0 6px color-mix(in srgb,var(--go) 55%,transparent)}to{box-shadow:0 0 0 0 transparent}}
+
+.row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.vol{display:flex;align-items:center;gap:12px}
+.vol label{font-size:13px;color:var(--dim);flex:none}
+.vol input{flex:1;accent-color:var(--amber);min-width:0}
+.vol .mono{width:44px;text-align:right;color:var(--dim)}
+.standby-line{font-size:14px;color:var(--dim)}
+.standby-line b{color:var(--amber);font-weight:500}
+
+/* 편집 */
+.editor{border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+body.locked .editor{display:none}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;border:0;background:none;padding:10px;color:var(--dim);font-weight:500;border-bottom:2px solid transparent}
+.tabs button.on{color:var(--fg);border-bottom-color:var(--amber)}
+.pane{padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+.pane .help{font-size:13px;color:var(--dim);margin:0}
+.items{display:flex;flex-direction:column;gap:6px}
+.item{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border-radius:8px;background:var(--panel2)}
+.item .n{font-family:var(--mono);font-weight:600;width:34px;flex:none}
+.item.cue .n{color:var(--amber)}
+.item.vmp .n{color:var(--vamp)}
+.item.off{opacity:.5}
+.item input[type=text]{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px;min-width:0}
+.item .t{width:92px;font-family:var(--mono)}
+.item .lab{flex:1;min-width:120px}
+.sbtn{border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:5px 9px;font-size:13px;color:var(--fg)}
+.sbtn:hover{border-color:var(--dim)}
+.sbtn.del{color:#ffb3ad}
+.sbtn.primary{border-color:var(--amber);color:var(--amber)}
+.empty-note{font-size:13px;color:var(--faint);padding:4px 2px}
+textarea{width:100%;min-height:72px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;resize:vertical}
+.pane input[type=range]{accent-color:var(--amber);flex:1;min-width:140px}
+
+.keys{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:4px 16px;font-size:12.5px;color:var(--dim);padding-top:4px}
+.keys kbd{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;margin-right:6px;color:var(--fg);background:var(--panel2)}
+
+/* 처음 설정 */
+.setup{border:1px dashed var(--amber);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px;background:color-mix(in srgb,var(--amber) 6%,transparent)}
+.setup h2{margin:0;font-size:17px}
+.setup p{margin:0;color:var(--dim);font-size:14px}
+
+/* 설정 창 */
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--fg);padding:0;width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 48px)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.dlg{padding:18px 20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
+.dlg h2{margin:0;font-size:18px}
+.dlg section{display:flex;flex-direction:column;gap:8px}
+.dlg h3{margin:0;font-size:13px;letter-spacing:.06em;color:var(--dim);font-weight:500}
+.dlg input[type=text],.dlg input[type=password],.dlg input[type=number],.setup input{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;width:100%}
+.dlg .row input[type=number]{width:80px}
+.dlg p{margin:0;font-size:13px;color:var(--dim)}
+.dlg .actions{display:flex;justify-content:flex-end}
+
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:8px;font-size:14px;font-weight:500;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100vw - 32px);z-index:20}
+.toast.show{opacity:1}
+
+/* 휴대폰 */
+@media (max-width:860px){
+  .layout{grid-template-columns:1fr}
+  .list-panel{border-right:0;border-top:1px solid var(--line);order:2}
+  .deck{order:1;padding:14px 16px 0}
+  .tracks{max-height:none}
+  body{padding-bottom:calc(150px + env(safe-area-inset-bottom,0px))}
+  .transport{position:fixed;left:0;right:0;bottom:0;z-index:5;background:var(--bg);padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));grid-template-columns:repeat(5,minmax(0,1fr));border-top:1px solid var(--line)}
+  .tbtn.go{grid-column:1 / -1;order:-1;min-height:60px}
+  .tbtn{min-height:50px;padding:6px 2px;font-size:13.5px;white-space:nowrap}
+  .keys{display:none}
+  .wave-wrap{height:120px}
+  .toast{bottom:calc(160px + env(safe-area-inset-bottom,0px))}
+}
+@media (prefers-reduced-motion:reduce){.tbtn.flash{animation:none}.toast{transition:none}}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="lamp" id="lamp"></span>
+    <b id="showTitle">MR 큐 데크</b>
+    <span class="muted" id="srcInfo">불러오는 중…</span>
+    <span class="sync" id="syncInfo" hidden></span>
+  </div>
+  <div class="top-actions">
+    <button class="chip" id="btnLock" title="편집 기능을 숨기고 실수로 파형을 눌러 이동하는 것을 막습니다">공연 모드</button>
+    <button class="chip" id="btnSettings">설정</button>
+  </div>
+</header>
+
+<main class="layout">
+  <aside class="list-panel">
+    <div class="list-head"><span>곡 목록</span><span id="listCount" class="mono"></span></div>
+    <div class="chips" id="castChips"></div>
+    <ol class="tracks" id="trackList"></ol>
+  </aside>
+
+  <section class="deck">
+    <div class="setup" id="setup" hidden>
+      <h2>구글 드라이브 연결이 필요해요</h2>
+      <p>구글 API 키를 입력하면 드라이브 MR 폴더의 곡을 순서대로 불러옵니다. 키 없이 쓰려면 이 기기에 있는 MR 파일을 직접 열 수 있어요.</p>
+      <input type="text" id="setupKey" placeholder="구글 API 키 (AIza…로 시작)" autocomplete="off">
+      <div class="row">
+        <button class="sbtn primary" id="setupSave">키 저장하고 불러오기</button>
+        <button class="sbtn" id="setupLocal">이 기기에서 MR 파일 열기</button>
+      </div>
+      <p id="setupErr" class="muted"></p>
+    </div>
+
+    <div class="now">
+      <div class="now-top">
+        <span class="badge" id="stateBadge">대기</span>
+        <span class="now-no" id="nowNo"></span>
+        <span class="now-cast" id="nowCast"></span>
+      </div>
+      <h1 id="nowTitle">곡을 선택하세요</h1>
+      <p class="memo" id="nowMemo"></p>
+      <div class="clock mono">
+        <span id="tElapsed">0:00.0</span>
+        <span id="tTotal">/ 0:00</span>
+        <span id="tRemain">−0:00</span>
+      </div>
+    </div>
+
+    <div class="nextgo">
+      <span class="lbl">스페이스 GO →</span>
+      <span id="goHint">재생할 곡을 선택하세요</span>
+      <span id="eventCountdown" class="mono"></span>
+    </div>
+
+    <div class="wave-wrap" id="waveWrap">
+      <canvas id="wave" aria-label="재생 바: 누르거나 끌어서 위치 이동"></canvas>
+      <div class="wave-msg" id="waveMsg"></div>
+      <div class="hover-time" id="hoverTime" hidden></div>
+    </div>
+
+    <div class="transport">
+      <button class="tbtn" id="bBack">−5초<small>←</small></button>
+      <button class="tbtn go" id="bGo">GO<small>SPACE</small></button>
+      <button class="tbtn" id="bPause">일시정지<small>P</small></button>
+      <button class="tbtn stop" id="bStop">정지<small>ESC</small></button>
+      <button class="tbtn" id="bFade" title="설정한 시간 동안 소리를 줄이고 정지">페이드<small>F</small></button>
+      <button class="tbtn" id="bFwd">+5초<small>→</small></button>
+    </div>
+
+    <div class="vol">
+      <label for="vol">전체 음량</label>
+      <input type="range" id="vol" min="0" max="100" step="1" value="85">
+      <span class="mono" id="volVal">85%</span>
+    </div>
+    <div class="standby-line">다음 대기곡: <b id="standbyTitle">—</b></div>
+
+    <div class="ro-note" id="roNote">큐·VAMP·메모는 공유 설정을 따라 자동으로 적용돼요. 편집하려면 설정에서 <b>편집 비밀번호</b>를 입력하세요.</div>
+    <div class="editor" id="editor">
+      <div class="tabs" role="tablist">
+        <button data-tab="cues" class="on">큐</button>
+        <button data-tab="vamps">VAMP</button>
+        <button data-tab="memo">메모 · 곡 음량</button>
+      </div>
+      <div class="pane" id="pane-cues">
+        <p class="help">재생 중 스페이스를 누르면 다음 큐 위치로 바로 넘어갑니다. 듣다가 <b>Q</b>를 누르면 그 자리에 큐가 생겨요. 숫자 키 1~9로 해당 큐로 바로 갈 수도 있어요.</p>
+        <div class="items" id="cueItems"></div>
+        <div class="row"><button class="sbtn primary" id="addCue">+ 현재 위치에 큐 추가</button></div>
+      </div>
+      <div class="pane" id="pane-vamps" hidden>
+        <p class="help">VAMP 구간에 들어오면 스페이스를 누를 때까지 그 구간을 반복합니다. 누르면 구간 끝까지 재생한 뒤 다음 부분으로 자연스럽게 이어져요. 듣다가 <b>I</b>(시작) → <b>O</b>(끝)를 누르면 구간이 바로 만들어집니다.</p>
+        <div class="items" id="vampItems"></div>
+        <div class="row"><button class="sbtn primary" id="addVamp">+ 현재 위치부터 VAMP 추가</button><span class="muted" id="pendingIn" style="font-size:13px"></span></div>
+      </div>
+      <div class="pane" id="pane-memo" hidden>
+        <p class="help">메모는 이 곡이 대기·재생될 때 제목 아래에 크게 보여요. (예: “배우 등장 후 GO”, “2절 후 VAMP”)</p>
+        <textarea id="memoInput" placeholder="이 곡 운영 메모"></textarea>
+        <div class="row">
+          <span class="muted" style="font-size:13px">곡별 음량</span>
+          <input type="range" id="trackGain" min="-15" max="6" step="0.5" value="0">
+          <span class="mono muted" id="trackGainVal" style="width:64px;text-align:right">0 dB</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="keys">
+      <span><kbd>Space</kbd>GO</span>
+      <span><kbd>Esc</kbd>정지 → 다음 곡 대기</span>
+      <span><kbd>P</kbd>일시정지 / 이어서</span>
+      <span><kbd>F</kbd>페이드아웃</span>
+      <span><kbd>← →</kbd>5초 뒤로 / 앞으로</span>
+      <span><kbd>Shift ← →</kbd>1초 이동</span>
+      <span><kbd>↑ ↓</kbd>대기곡 바꾸기</span>
+      <span><kbd>Enter</kbd>대기곡 바로 재생</span>
+      <span><kbd>1–9</kbd>해당 번호 큐로</span>
+      <span><kbd>Q</kbd>큐 추가</span>
+      <span><kbd>I</kbd><kbd>O</kbd>VAMP 시작 / 끝</span>
+      <span><kbd>- =</kbd>전체 음량</span>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlg">
+  <div class="dlg">
+    <h2>설정</h2>
+    <section>
+      <h3>구글 드라이브</h3>
+      <input type="password" id="optKey" placeholder="구글 API 키" autocomplete="off">
+      <input type="text" id="optFolder" placeholder="드라이브 폴더 주소 또는 ID">
+      <p>폴더가 ‘링크가 있는 모든 사용자’에게 공유되어 있어야 합니다. 곡 순서는 파일 이름 순서(01, 02 …)를 따릅니다.</p>
+      <div class="row"><button class="sbtn primary" id="optReload">저장하고 다시 불러오기</button></div>
+    </section>
+    <section>
+      <h3>큐 · VAMP 공유</h3>
+      <p>공유 서버가 연결되어 있으면 편집 비밀번호를 아는 사람이 고친 큐·VAMP·메모가 모든 사람에게 자동으로 적용됩니다. 비밀번호가 없으면 보기·재생만 할 수 있어요.</p>
+      <input type="text" id="optServer" placeholder="공유 서버 주소 (https://script.google.com/macros/s/…/exec)" autocomplete="off">
+      <input type="password" id="optPw" placeholder="편집 비밀번호" autocomplete="off">
+      <div class="row"><button class="sbtn primary" id="optPwSave">연결하고 비밀번호 확인</button><span class="muted" id="pwStatus" style="font-size:13px"></span></div>
+      <p>백업용: 설정을 파일로 내보내거나 가져올 수 있어요.</p>
+      <div class="row">
+        <button class="sbtn" id="optExport">파일로 내보내기</button>
+        <button class="sbtn" id="optImport">파일에서 가져오기</button>
+        <button class="sbtn" id="optDriveCues">드라이브 설정 다시 받기</button>
+      </div>
+    </section>
+    <section>
+      <h3>공연장 대비 (오프라인)</h3>
+      <p>모든 곡을 이 기기에 미리 저장해 두면 인터넷이 끊겨도 재생됩니다.</p>
+      <div class="row">
+        <button class="sbtn primary" id="optCacheAll">모든 곡 이 기기에 저장</button>
+        <button class="sbtn del" id="optClearCache">저장된 곡 지우기</button>
+      </div>
+      <p id="cacheStatus" class="mono"></p>
+    </section>
+    <section>
+      <h3>기기 파일</h3>
+      <div class="row"><button class="sbtn" id="optLocal">이 기기에서 MR 파일 열기</button></div>
+    </section>
+    <section>
+      <h3>조작</h3>
+      <div class="row"><span class="muted" style="font-size:14px;width:150px">←/→ 이동 간격(초)</span><input type="number" id="optSeek" min="1" max="30" step="1"></div>
+      <div class="row"><span class="muted" style="font-size:14px;width:150px">페이드아웃 시간(초)</span><input type="number" id="optFade" min="0.5" max="15" step="0.5"></div>
+    </section>
+    <div class="actions"><button class="sbtn primary" id="dlgClose">닫기</button></div>
+  </div>
+</dialog>
+
+<input type="file" id="fileLocal" accept="audio/*,.mp3,.wav,.m4a,.json" multiple hidden>
+<input type="file" id="fileImport" accept=".json,application/json" hidden>
+<div class="toast" id="toast"></div>
+
+<script>
+/* =========================================================
+   기본 설정 — API 키를 여기에 넣어 두면 주소만 받은 사람도 바로 씁니다.
+   ========================================================= */
+const CONFIG = {
+  API_KEY: 'AIzaSyBgnH6rCm7ocqyqDFVZMHcrUa54OEnvztE', // 구글 API 키
+  FOLDER_ID: '1e_LfY6XXcp-P_BbOMiGYXnh7MUrFNt80',     // 미드나잇MR 폴더
+  CUE_SERVER_URL: 'https://script.google.com/macros/s/AKfycbxWT9pJwl85Lm2Qi4U-ZUN2NR3oagBBs5GYVt01RlgHYFg7spFh2gFgU6Tfla5qSigTjw/exec', // 큐 공유 서버
+  CUE_FILE_NAME: 'mr-cues.json',
+  SEEK_STEP: 5,
+  FADE_SEC: 3,
+};
+
+/* ---------- 작은 도우미 ---------- */
+const $ = s => document.querySelector(s);
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem('mrdeck.' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('mrdeck.' + k, JSON.stringify(v)); } catch (e) {} },
+};
+function fmt(t, dec = 1) {
+  if (!isFinite(t) || t < 0) t = 0;
+  const m = Math.floor(t / 60); let s = t - m * 60;
+  let ss = s.toFixed(dec);
+  if (parseFloat(ss) >= 60) { return fmt((m + 1) * 60, dec); }
+  if (s < 10) ss = '0' + ss;
+  return m + ':' + ss;
+}
+function parseTime(str) {
+  str = String(str).trim().replace(/[^\d:.]/g, '');
+  if (!str) return NaN;
+  if (str.includes(':')) { const [m, s] = str.split(':'); return (+m || 0) * 60 + (+s || 0); }
+  return +str;
+}
+const dbToGain = db => Math.pow(10, db / 20);
+const volToGain = v => Math.pow(v / 100, 2) * 1.2;
+const natural = (a, b) => a.localeCompare(b, 'ko', { numeric: true, sensitivity: 'base' });
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let toastTimer;
+function toast(msg, ms = 2200) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms); }
+function flashGo() { const b = $('#bGo'); b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash'); }
+
+function parseTrackName(name) {
+  const key = name.replace(/\.(mp3|wav|m4a|aac|ogg|oga|flac|aif|aiff)$/i, '').trim();
+  let no = '', title = key, cast = '';
+  const m = key.match(/^(\d+(?:\s*-\s*\d+)?)\s*\.\s*(.*)$/);
+  if (m) { no = m[1].replace(/\s/g, ''); title = m[2]; }
+  const c = title.match(/\(([^()]+)\)\s*$/);
+  if (c) { cast = c[1].split(/[,，]/).map(s => s.trim()).filter(Boolean).join(', '); title = title.slice(0, c.index).trim(); }
+  return { key, no, title: title || key, cast };
+}
+
+/* ---------- 상태 ---------- */
+const S = {
+  tracks: [], sel: -1, selManual: false,
+  cast: LS.get('cast', '전체'), locked: LS.get('locked', false),
+  settings: LS.get('settings', { updated: 0, tracks: {} }),
+  vol: LS.get('vol', 85), seekStep: LS.get('seek', CONFIG.SEEK_STEP), fadeSec: LS.get('fade', CONFIG.FADE_SEC),
+  source: 'drive', folderName: '', cueFile: null, cached: new Set(), tab: 'cues', pendingIn: null,
+};
+function apiKey() { return LS.get('apiKey', '') || CONFIG.API_KEY; }
+function folderId() { return LS.get('folder', '') || CONFIG.FOLDER_ID; }
+function tset(key, create) {
+  let o = S.settings.tracks[key];
+  if (!o) { if (!create) return { cues: [], vamps: [], gain: 0, memo: '' }; o = S.settings.tracks[key] = {}; }
+  o.cues = o.cues || []; o.vamps = o.vamps || []; o.gain = o.gain || 0; o.memo = o.memo || '';
+  return o;
+}
+function saveSettings(key) { S.settings.updated = Date.now(); if (key) markDirty(key); LS.set('settings', S.settings); }
+
+/* ---------- 큐 공유 (Apps Script 서버) ---------- */
+const SYNC = { pw: LS.get('pw', ''), ok: false, dirty: new Set(), sentU: {}, timer: null, state: '', busy: false };
+function syncURL() { return LS.get('cueServer', '') || CONFIG.CUE_SERVER_URL; }
+function syncOn() { return !!syncURL(); }
+function canEdit() { return !syncOn() || SYNC.ok; }
+function setSync(st) { SYNC.state = st; renderSync(); }
+function renderSync() {
+  const el = $('#syncInfo'); if (!el) return;
+  el.hidden = !syncOn();
+  const map = { synced: ['ok', '큐 공유됨'], saving: ['busy', '큐 저장 중…'], error: ['err', '큐 공유 오류'], loading: ['busy', '큐 불러오는 중…'] };
+  const [c, t] = map[SYNC.state] || ['', '큐 공유'];
+  el.className = 'sync ' + c; el.textContent = t + (syncOn() && !SYNC.ok ? ' · 보기 전용' : '');
+  document.body.classList.toggle('readonly', !canEdit());
+}
+function markDirty(k) {
+  const o = S.settings.tracks[k]; if (!o) return;
+  o.u = Date.now();
+  if (!syncOn() || !SYNC.ok) return;
+  SYNC.dirty.add(k); setSync('saving');
+  clearTimeout(SYNC.timer); SYNC.timer = setTimeout(pushCues, 1200);
+}
+async function syncPost(body) {
+  const r = await fetch(syncURL(), { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) });
+  if (!r.ok) throw new Error('서버 응답 ' + r.status);
+  return r.json();
+}
+async function pushCues() {
+  if (!SYNC.dirty.size || !SYNC.ok) return;
+  if (SYNC.busy) { clearTimeout(SYNC.timer); SYNC.timer = setTimeout(pushCues, 800); return; }
+  SYNC.busy = true;
+  const keys = [...SYNC.dirty], tracks = {};
+  keys.forEach(k => { tracks[k] = JSON.parse(JSON.stringify(S.settings.tracks[k])); SYNC.sentU[k] = tracks[k].u; });
+  try {
+    const j = await syncPost({ password: SYNC.pw, tracks });
+    if (!j.ok) { if (j.error === 'password') { SYNC.ok = false; renderAll(); } throw new Error(j.error === 'password' ? '편집 비밀번호가 맞지 않아요' : (j.error || '저장 실패')); }
+    keys.forEach(k => { if ((S.settings.tracks[k] || {}).u === SYNC.sentU[k]) SYNC.dirty.delete(k); });
+    if (j.data) mergeRemote(j.data);
+    setSync(SYNC.dirty.size ? 'saving' : 'synced');
+    if (SYNC.dirty.size) SYNC.timer = setTimeout(pushCues, 600);
+  } catch (e) {
+    setSync('error'); toast('큐를 공유 서버에 저장하지 못했어요: ' + e.message, 4000);
+    if (SYNC.ok) SYNC.timer = setTimeout(pushCues, 8000);
+  } finally { SYNC.busy = false; }
+}
+function mergeRemote(j) {
+  if (!j || typeof j.tracks !== 'object') return;
+  let changed = false;
+  for (const [k, v] of Object.entries(j.tracks)) {
+    if (SYNC.dirty.has(k) || !v) continue;
+    const a = S.settings.tracks[k];
+    if (!a || (v.u || 0) > (a.u || 0)) { S.settings.tracks[k] = v; changed = true; }
+  }
+  if (changed) { LS.set('settings', S.settings); if (P.running) armVamp(); renderAll(); }
+}
+async function pullCues(silent) {
+  if (!syncOn() || SYNC.busy) return;
+  if (!silent) setSync('loading');
+  try {
+    const u = syncURL();
+    const r = await fetch(u + (u.includes('?') ? '&' : '?') + 't=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error('서버 응답 ' + r.status);
+    mergeRemote(await r.json());
+    if (!SYNC.dirty.size) setSync('synced');
+  } catch (e) { setSync('error'); if (!silent) toast('공유 큐를 불러오지 못했어요: ' + e.message, 4000); }
+}
+async function verifyPw(pw, silent) {
+  if (!syncOn() || !pw) { SYNC.ok = false; renderAll(); return false; }
+  try {
+    const j = await syncPost({ password: pw, tracks: {} });
+    SYNC.ok = !!j.ok; if (SYNC.ok) { SYNC.pw = pw; LS.set('pw', pw); }
+    if (j.data) mergeRemote(j.data);
+    if (!silent) toast(SYNC.ok ? '편집 권한이 확인됐어요' : '편집 비밀번호가 맞지 않아요');
+  } catch (e) { SYNC.ok = false; if (!silent) toast('공유 서버에 연결하지 못했어요: ' + e.message, 4000); }
+  renderAll(); return SYNC.ok;
+}
+setInterval(() => { if (document.visibilityState === 'visible' && !SYNC.dirty.size && !isTyping(document.activeElement)) pullCues(true); }, 20000);
+window.addEventListener('focus', () => { if (!SYNC.dirty.size) pullCues(true); });
+function visible() { return S.tracks.map((t, i) => i).filter(i => S.cast === '전체' || !S.tracks[i].cast || S.tracks[i].cast === S.cast); }
+function nextVisible(i) { const v = visible(); const k = v.indexOf(i); if (k < 0) return v.find(x => x > i) ?? -1; return k + 1 < v.length ? v[k + 1] : -1; }
+function prevVisible(i) { const v = visible(); const k = v.indexOf(i); if (k < 0) { const r = v.filter(x => x < i); return r.length ? r[r.length - 1] : -1; } return k > 0 ? v[k - 1] : -1; }
+
+/* ---------- 오프라인 저장소 (IndexedDB) ---------- */
+const IDB = (() => {
+  let dbp;
+  function db() {
+    return dbp || (dbp = new Promise((res, rej) => {
+      const r = indexedDB.open('mrdeck', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('audio');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    }));
+  }
+  function op(mode, fn) {
+    return db().then(d => new Promise((res, rej) => {
+      const tx = d.transaction('audio', mode); const req = fn(tx.objectStore('audio'));
+      tx.oncomplete = () => res(req ? req.result : undefined); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+    }));
+  }
+  return {
+    get: k => op('readonly', s => s.get(k)).catch(() => null),
+    put: (k, v) => op('readwrite', s => s.put(v, k)).catch(() => null),
+    keys: () => op('readonly', s => s.getAllKeys()).catch(() => []),
+    clear: () => op('readwrite', s => s.clear()).catch(() => null),
+    del: k => op('readwrite', s => s.delete(k)).catch(() => null),
+  };
+})();
+
+/* 기기에 저장하는 음원은 원본 그대로 두지 않고 뒤섞어서(XOR) 저장 — 저장소에서 꺼내도 재생되지 않음 */
+const CACHE_VER = 'v2:';
+function scramble(buf) {
+  const n4 = buf.byteLength >> 2, u32 = new Uint32Array(buf, 0, n4);
+  let x = 0x9e3779b9;
+  for (let i = 0; i < n4; i++) { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; u32[i] ^= x; }
+  const tail = new Uint8Array(buf, n4 * 4);
+  for (let i = 0; i < tail.length; i++) tail[i] ^= 0xa5;
+  return buf;
+}
+
+/* ---------- 구글 드라이브 ---------- */
+const DRIVE = 'https://www.googleapis.com/drive/v3/';
+async function driveErr(r) {
+  let msg = '';
+  try { const j = await r.json(); msg = j.error && j.error.message || ''; } catch (e) {}
+  if (r.status === 404) return '폴더나 파일을 찾을 수 없어요. 드라이브 공유가 ‘링크가 있는 모든 사용자’인지 확인해 주세요.';
+  if (r.status === 400 || r.status === 403) {
+    if (/API key not valid|API_KEY_INVALID/i.test(msg)) return 'API 키가 올바르지 않아요. 설정에서 키를 확인해 주세요.';
+    if (/referer|referrer/i.test(msg)) return '이 주소에서는 API 키 사용이 막혀 있어요. 구글 클라우드에서 키의 웹사이트 제한을 확인해 주세요.';
+    if (/has not been used|disabled/i.test(msg)) return '구글 클라우드에서 Google Drive API를 ‘사용’으로 켜 주세요.';
+    return '드라이브 접근이 거부됐어요 (' + r.status + '). ' + msg;
+  }
+  return '드라이브 오류 ' + r.status + ' ' + msg;
+}
+async function driveJSON(path, params) {
+  const u = new URL(DRIVE + path);
+  Object.entries(params || {}).forEach(([k, v]) => u.searchParams.set(k, v));
+  u.searchParams.set('key', apiKey());
+  const r = await fetch(u.toString()); // 일부 미리보기 환경은 URL 객체를 넘기지 못해 문자열로 전달
+  if (!r.ok) throw new Error(await driveErr(r));
+  return r.json();
+}
+function mediaURL(id) { return DRIVE + 'files/' + encodeURIComponent(id) + '?alt=media&key=' + encodeURIComponent(apiKey()); }
+
+async function loadDrive() {
+  const key = apiKey(), fid = folderId();
+  if (!key) { showSetup(''); setSrc('드라이브 미연결', false); renderAll(); return; }
+  $('#setup').hidden = true;
+  setSrc('드라이브 연결 중…', false);
+  try {
+    const meta = await driveJSON('files/' + fid, { fields: 'name', supportsAllDrives: 'true' });
+    S.folderName = meta.name || '';
+    let files = [], token = '';
+    do {
+      const p = { q: `'${fid}' in parents and trashed=false`, fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)', pageSize: '1000', orderBy: 'name_natural', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true' };
+      if (token) p.pageToken = token;
+      const j = await driveJSON('files', p);
+      files.push(...(j.files || [])); token = j.nextPageToken;
+    } while (token);
+    const audio = files.filter(f => /^audio\//.test(f.mimeType) || /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(f.name));
+    audio.sort((a, b) => natural(a.name, b.name));
+    S.cueFile = files.find(f => f.name === CONFIG.CUE_FILE_NAME) || null;
+    S.source = 'drive';
+    S.tracks = audio.map(f => Object.assign(parseTrackName(f.name), {
+      uid: f.id, id: f.id, name: f.name, size: +f.size || 0, cacheKey: CACHE_VER + f.id + ':' + f.modifiedTime, state: 'idle', progress: 0,
+    }));
+    const keys = await IDB.keys();
+    keys.filter(k => !String(k).startsWith(CACHE_VER)).forEach(k => IDB.del(k)); // 예전 방식(원본 그대로)으로 저장된 곡 정리
+    S.cached = new Set(keys.filter(k => String(k).startsWith(CACHE_VER)));
+    S.tracks.forEach(t => { if (S.cached.has(t.cacheKey)) t.state = 'cached'; });
+    setSrc((S.folderName ? S.folderName + ' · ' : '') + '드라이브 ' + S.tracks.length + '곡', true);
+    if (syncOn()) pullCues(false); else if (S.cueFile) await loadDriveCues(false);
+    afterTracksLoaded();
+  } catch (e) {
+    setSrc('드라이브 연결 실패', false);
+    showSetup(e.message);
+    toast(e.message, 5000);
+    renderAll();
+  }
+}
+async function loadDriveCues(force) {
+  if (!S.cueFile) { if (force) toast('드라이브 폴더에 ' + CONFIG.CUE_FILE_NAME + ' 파일이 없어요'); return; }
+  try {
+    const r = await fetch(mediaURL(S.cueFile.id));
+    if (!r.ok) throw new Error(await driveErr(r));
+    const j = await r.json();
+    if (j && j.tracks && (force || (j.updated || 0) > (S.settings.updated || 0))) {
+      S.settings = { updated: j.updated || Date.now(), tracks: j.tracks };
+      LS.set('settings', S.settings);
+      toast('드라이브의 큐·VAMP 설정을 적용했어요');
+      if (P.running) armVamp();
+      renderAll();
+    } else if (force) toast('이 기기의 설정이 더 최신이에요');
+  } catch (e) { toast('큐 설정 파일을 읽지 못했어요: ' + e.message, 4000); }
+}
+function showSetup(err) {
+  $('#setup').hidden = false;
+  $('#setupErr').textContent = err || '';
+  $('#setupKey').value = LS.get('apiKey', '') || CONFIG.API_KEY;
+}
+function setSrc(text, ok) { $('#srcInfo').textContent = text; $('#lamp').classList.toggle('on', !!ok); }
+
+function openLocal(files) {
+  files = Array.from(files || []);
+  const json = files.find(f => /\.json$/i.test(f.name));
+  if (json) importSettingsFile(json);
+  const audio = files.filter(f => /^audio\//.test(f.type) || /\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(f.name)).sort((a, b) => natural(a.name, b.name));
+  if (!audio.length) { if (!json) toast('음원 파일을 찾지 못했어요'); return; }
+  hardStop();
+  decoded.clear();
+  S.source = 'local';
+  S.tracks = audio.map(f => Object.assign(parseTrackName(f.name), { uid: 'local:' + f.name + ':' + f.size, name: f.name, size: f.size, file: f, local: true, state: 'idle', progress: 0 }));
+  $('#setup').hidden = true;
+  setSrc('이 기기 파일 ' + S.tracks.length + '곡', true);
+  afterTracksLoaded();
+}
+function afterTracksLoaded() {
+  const casts = [...new Set(S.tracks.map(t => t.cast).filter(Boolean))];
+  if (S.cast !== '전체' && !casts.includes(S.cast)) S.cast = '전체';
+  S.selManual = false;
+  const v = visible();
+  if (!P.running && !P.paused) { S.sel = v.length ? v[0] : -1; loadDeck(S.sel); }
+  renderAll();
+}
+
+/* ---------- 음원 불러오기 / 해석 ---------- */
+const decoded = new Map(); // uid -> AudioBuffer (최근 3곡)
+const loading = new Map();
+const bytesLoading = new Map();
+let listRenderQueued = false;
+function queueListRender() { if (listRenderQueued) return; listRenderQueued = true; requestAnimationFrame(() => { listRenderQueued = false; renderList(); renderDeckStatic(); }); }
+
+async function fetchWithProgress(url, size, onp) {
+  const r = await fetch(url, { cache: 'no-store' }); // 브라우저 캐시에 원본 파일이 남지 않게
+  if (!r.ok) throw new Error(await driveErr(r));
+  const total = size || +r.headers.get('content-length') || 0;
+  if (!r.body || !r.body.getReader || !total) return r.arrayBuffer();
+  const reader = r.body.getReader(); const chunks = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length; onp(Math.min(1, got / total)); }
+  const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+  return out.buffer;
+}
+function getBytes(t) {
+  if (t.local) return t.file.arrayBuffer();
+  if (bytesLoading.has(t.uid)) return bytesLoading.get(t.uid);
+  const p = (async () => {
+    const hit = await IDB.get(t.cacheKey);
+    if (hit) return scramble(hit);
+    t.state = 'loading'; t.progress = 0; queueListRender();
+    const buf = await fetchWithProgress(mediaURL(t.id), t.size, f => { t.progress = f; queueListRender(); });
+    await IDB.put(t.cacheKey, scramble(buf.slice(0)));
+    S.cached.add(t.cacheKey); t.state = 'cached'; queueListRender();
+    return buf;
+  })();
+  bytesLoading.set(t.uid, p);
+  p.finally(() => bytesLoading.delete(t.uid));
+  return p;
+}
+function decode(bytes) {
+  ensureCtx();
+  return new Promise((res, rej) => {
+    try { const pr = ctx.decodeAudioData(bytes, res, rej); if (pr && pr.then) pr.then(res, rej); } catch (e) { rej(e); }
+  });
+}
+function computePeaks(buf, n = 1800) {
+  const ch0 = buf.getChannelData(0), ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : null;
+  const len = ch0.length, bin = len / n, out = new Float32Array(n); let max = 0;
+  for (let k = 0; k < n; k++) {
+    const s = Math.floor(k * bin), e = Math.min(len, Math.floor((k + 1) * bin)); const step = Math.max(1, Math.floor((e - s) / 300)); let m = 0;
+    for (let j = s; j < e; j += step) { const v = Math.abs(ch0[j]) + (ch1 ? Math.abs(ch1[j]) : 0); if (v > m) m = v; }
+    out[k] = m; if (m > max) max = m;
+  }
+  if (max > 0) for (let k = 0; k < n; k++) out[k] /= max;
+  return out;
+}
+function getBuffer(i) {
+  const t = S.tracks[i];
+  if (!t) return Promise.reject(new Error('곡이 없어요'));
+  if (decoded.has(t.uid)) { const b = decoded.get(t.uid); decoded.delete(t.uid); decoded.set(t.uid, b); return Promise.resolve(b); }
+  if (loading.has(t.uid)) return loading.get(t.uid);
+  const p = (async () => {
+    const bytes = await getBytes(t);
+    t.state = 'decoding'; queueListRender();
+    const buf = await decode(bytes);
+    t.duration = buf.duration;
+    if (!t.peaks) t.peaks = computePeaks(buf);
+    t.state = t.local ? 'ready' : 'cached'; t.err = '';
+    decoded.set(t.uid, buf);
+    while (decoded.size > 3) decoded.delete(decoded.keys().next().value);
+    return buf;
+  })();
+  loading.set(t.uid, p);
+  p.catch(e => { t.state = 'error'; t.err = e.message || '불러오기 실패'; }).finally(() => { loading.delete(t.uid); queueListRender(); });
+  return p;
+}
+function prefetch(i) { if (i >= 0 && S.tracks[i]) getBuffer(i).catch(() => {}); }
+
+/* ---------- 오디오 엔진 ---------- */
+let ctx, master, tg;
+function ensureCtx() {
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC({ latencyHint: 'interactive' });
+    master = ctx.createGain(); tg = ctx.createGain();
+    tg.connect(master); master.connect(ctx.destination);
+    master.gain.value = volToGain(S.vol);
+  }
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  return ctx;
+}
+function unlock() { ensureCtx(); if (ctx.state !== 'running') ctx.resume().catch(() => {}); }
+
+const P = { idx: -1, uid: null, buf: null, src: null, g: null, running: false, paused: false, loading: false, aCtx: 0, aPos: 0, armed: null, released: new Set(), gen: 0, tok: 0, fading: false };
+
+function curKey() { const t = S.tracks[P.idx]; return t ? t.key : null; }
+function curCues() { const k = curKey(); return k ? tset(k).cues.slice().sort((a, b) => a.t - b.t) : []; }
+function curVamps() { const k = curKey(); return k ? tset(k).vamps.slice().sort((a, b) => a.a - b.a) : []; }
+function duration() { return P.buf ? P.buf.duration : ((S.tracks[P.idx] || {}).duration || 0); }
+
+function pos() {
+  if (!P.running) return P.aPos;
+  let p = P.aPos + (ctx.currentTime - P.aCtx);
+  const s = P.src;
+  if (s && s.loop && P.aPos < s.loopEnd && p >= s.loopEnd) { const L = s.loopEnd - s.loopStart; if (L > 0) p = s.loopStart + ((p - s.loopStart) % L); }
+  return Math.max(0, Math.min(p, duration()));
+}
+function reanchor() { P.aPos = pos(); P.aCtx = ctx.currentTime; }
+
+function applyTrackGain() {
+  if (!tg) return;
+  const t = S.tracks[P.idx]; const db = t ? tset(t.key).gain : 0;
+  const now = ctx.currentTime;
+  tg.gain.cancelScheduledValues(now); tg.gain.setValueAtTime(dbToGain(db), now);
+  P.fading = false;
+}
+function stopSource(fade = 0.03) {
+  P.gen++;
+  const s = P.src, g = P.g; P.src = null; P.g = null;
+  if (!s) return;
+  const now = ctx.currentTime;
+  try { s.onended = null; g.gain.cancelScheduledValues(now); g.gain.setValueAtTime(g.gain.value, now); g.gain.linearRampToValueAtTime(0, now + fade); s.stop(now + fade + 0.02); } catch (e) {}
+}
+function startAt(t) {
+  const d = duration();
+  t = Math.max(0, Math.min(t, Math.max(0, d - 0.05)));
+  stopSource(0.025);
+  applyTrackGain();
+  const now = ctx.currentTime;
+  const g = ctx.createGain(); g.connect(tg);
+  g.gain.setValueAtTime(0, now); g.gain.linearRampToValueAtTime(1, now + 0.015);
+  const src = ctx.createBufferSource(); src.buffer = P.buf; src.connect(g);
+  P.src = src; P.g = g; P.aPos = t; P.aCtx = now; P.running = true; P.paused = false;
+  curVamps().forEach(v => { if (v.a > t + 0.01) P.released.delete(v.id); });
+  const my = P.gen;
+  src.onended = () => { if (my === P.gen && P.src === src) onTrackEnd(); };
+  src.start(now, t);
+  armVamp();
+}
+function armVamp() {
+  const s = P.src; if (!s) { P.armed = null; return; }
+  reanchor();
+  const p = P.aPos;
+  const v = curVamps().find(v => v.on !== false && v.b - v.a > 0.05 && v.b > p + 0.01 && !P.released.has(v.id)) || null;
+  P.armed = v;
+  s.loop = false;
+  if (v) { s.loopStart = v.a; s.loopEnd = v.b; s.loop = true; }
+}
+function inVamp() { return P.running && P.armed && pos() >= P.armed.a - 0.005; }
+function releaseVamp() { if (!P.armed) return; P.released.add(P.armed.id); armVamp(); }
+function nextCue(p) { const cs = curCues(); for (let k = 0; k < cs.length; k++) if (cs[k].t > p + 0.08) return Object.assign({ n: k + 1 }, cs[k]); return null; }
+
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (e) {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && P.running) keepAwake(true); });
+
+function loadDeck(i) {
+  if (P.running || P.paused || P.loading) return;
+  P.idx = i; P.buf = null; P.aPos = 0; P.released.clear(); P.armed = null;
+  const t = S.tracks[i];
+  P.uid = t ? t.uid : null;
+  renderAll();
+  if (!t) return;
+  getBuffer(i).then(b => { if (P.idx === i && !P.running && !P.paused) { P.buf = b; renderAll(); } }).catch(() => renderAll());
+}
+async function playTrack(i, from = 0) {
+  const t = S.tracks[i]; if (!t) return;
+  unlock();
+  stopSource(0.03);
+  P.running = false; P.paused = false; P.armed = null;
+  P.idx = i; P.uid = t.uid; P.released.clear();
+  S.sel = i; S.selManual = false;
+  const tok = ++P.tok;
+  P.loading = true; renderAll();
+  let buf;
+  try { buf = await getBuffer(i); }
+  catch (e) { if (tok === P.tok) { P.loading = false; renderAll(); toast('재생할 수 없어요: ' + e.message, 4000); } return; }
+  if (tok !== P.tok) return;
+  P.loading = false;
+  P.buf = buf;
+  if (ctx.state !== 'running') { try { await ctx.resume(); } catch (e) {} }
+  startAt(from);
+  keepAwake(true);
+  renderAll();
+  prefetch(nextVisible(i));
+}
+
+/* ---------- 명령 ---------- */
+function standbyIdx() { return (P.running || P.paused || P.loading) ? (S.selManual ? S.sel : nextVisible(P.idx)) : S.sel; }
+function deckIdx() { return (P.running || P.paused || P.loading) ? P.idx : S.sel; }
+
+function go() {
+  unlock();
+  flashGo();
+  if (P.loading) return;
+  if (P.running) {
+    if (inVamp()) { releaseVamp(); toast('VAMP 해제 — 구간 끝에서 이어집니다', 1400); renderAll(); return; }
+    const c = nextCue(pos());
+    if (c) { startAt(c.t); toast('큐 ' + c.n + (c.label ? ' · ' + c.label : ''), 1200); renderAll(); return; }
+    toast('이 곡에는 남은 큐가 없어요 (다음 곡은 Esc 후 GO)', 1800);
+    return;
+  }
+  if (P.paused) { resume(); return; }
+  const i = S.sel;
+  if (i < 0) { toast('재생할 곡을 목록에서 선택하세요'); return; }
+  const from = (P.idx === i) ? P.aPos : 0;
+  playTrack(i, from >= duration() - 0.1 ? 0 : from);
+}
+function pause() {
+  if (P.running) { const p = pos(); stopSource(0.06); P.running = false; P.paused = true; P.aPos = p; keepAwake(false); renderAll(); }
+  else if (P.paused) resume();
+}
+function resume() { if (!P.paused || !P.buf) return; unlock(); startAt(P.aPos); keepAwake(true); renderAll(); }
+function hardStop() { P.tok++; stopSource(0.02); P.running = false; P.paused = false; P.loading = false; P.armed = null; }
+function stopCmd() {
+  if (P.loading) { hardStop(); renderAll(); return; }
+  if (!P.running && !P.paused) {
+    if (P.aPos > 0) { P.aPos = 0; renderAll(); }
+    return;
+  }
+  const was = P.idx;
+  stopSource(0.12);
+  P.running = false; P.paused = false; P.armed = null;
+  setTimeout(() => { if (!P.running) applyTrackGain(); }, 160);
+  keepAwake(false);
+  const next = S.selManual ? S.sel : nextVisible(was);
+  S.selManual = false;
+  S.sel = next;
+  loadDeck(next);
+  prefetch(next);
+  toast(next >= 0 ? '정지 — 다음 곡 대기 중' : '정지 — 마지막 곡이었어요');
+}
+function onTrackEnd() {
+  const was = P.idx;
+  P.src = null; P.g = null; P.running = false; P.paused = false; P.armed = null;
+  keepAwake(false);
+  const next = S.selManual ? S.sel : nextVisible(was);
+  S.selManual = false; S.sel = next;
+  applyTrackGain();
+  loadDeck(next);
+  prefetch(next);
+  toast(next >= 0 ? '곡 끝 — 다음 곡 대기 중' : '마지막 곡이 끝났어요');
+}
+function fadeOut() {
+  if (!P.running || P.fading) return;
+  const sec = +S.fadeSec || 3, now = ctx.currentTime;
+  tg.gain.cancelScheduledValues(now); tg.gain.setValueAtTime(tg.gain.value, now); tg.gain.linearRampToValueAtTime(0.0001, now + sec);
+  P.fading = true; const my = P.gen;
+  toast('페이드아웃 ' + sec + '초');
+  setTimeout(() => { if (P.gen === my && P.running && P.fading) stopCmd(); }, sec * 1000 + 40);
+}
+function seek(t) {
+  const d = duration(); if (!d && !P.running) { P.aPos = Math.max(0, t); renderAll(); return; }
+  t = Math.max(0, Math.min(t, d));
+  if (P.running) startAt(t);
+  else { P.aPos = t; renderAll(); }
+}
+function skip(dt) { if (P.idx < 0) return; seek(pos() + dt); }
+function selectStandby(i) {
+  if (i < 0 || !S.tracks[i]) return;
+  if (P.running || P.paused || P.loading) { S.sel = i; S.selManual = (i !== nextVisible(P.idx)); prefetch(i); renderAll(); }
+  else { S.sel = i; loadDeck(i); }
+}
+function moveStandby(dir) {
+  const base = standbyIdx();
+  let i = dir > 0 ? nextVisible(base) : prevVisible(base);
+  if (base < 0) { const v = visible(); i = v.length ? v[0] : -1; }
+  if (i >= 0) selectStandby(i);
+}
+function playNow(i) { if (i < 0) return; playTrack(i, 0); }
+function jumpCue(n) {
+  const k = deckIdx(); const t = S.tracks[k]; if (!t) return;
+  const cs = tset(t.key).cues.slice().sort((a, b) => a.t - b.t); const c = cs[n - 1];
+  if (!c) { toast(n + '번 큐가 없어요'); return; }
+  if (P.running && P.idx === k) startAt(c.t);
+  else if (P.paused) { P.aPos = c.t; resume(); }
+  else playTrack(k, c.t);
+}
+function setVol(v) {
+  S.vol = Math.max(0, Math.min(100, Math.round(v))); LS.set('vol', S.vol);
+  $('#vol').value = S.vol; $('#volVal').textContent = S.vol + '%';
+  if (master) { const now = ctx.currentTime; master.gain.cancelScheduledValues(now); master.gain.setTargetAtTime(volToGain(S.vol), now, 0.03); }
+}
+
+/* ---------- 큐 · VAMP 편집 ---------- */
+function editKey() { const t = S.tracks[deckIdx()]; return t ? t.key : null; }
+function editPos() { return deckIdx() === P.idx ? pos() : 0; }
+function afterEdit() { saveSettings(editKey()); if (P.running) armVamp(); renderAll(); }
+function addCue(at) {
+  const k = editKey(); if (!k || !canEdit()) return;
+  const o = tset(k, true); const t = at == null ? editPos() : at;
+  if (o.cues.some(c => Math.abs(c.t - t) < 0.05)) { toast('이미 그 위치에 큐가 있어요'); return; }
+  o.cues.push({ t: +t.toFixed(2), label: '' }); o.cues.sort((a, b) => a.t - b.t);
+  afterEdit(); toast('큐 추가 · ' + fmt(t, 2));
+}
+function addVamp(a, b) {
+  const k = editKey(); if (!k || !canEdit()) return;
+  const o = tset(k, true); const d = (S.tracks[deckIdx()] || {}).duration || Infinity;
+  if (b == null) b = Math.min(d, a + 4);
+  if (b - a < 0.1) { toast('VAMP 구간이 너무 짧아요'); return; }
+  o.vamps.push({ id: 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), a: +a.toFixed(3), b: +b.toFixed(3), on: true });
+  o.vamps.sort((x, y) => x.a - y.a);
+  S.tab = 'vamps'; afterEdit(); toast('VAMP 추가 · ' + fmt(a, 2) + ' ~ ' + fmt(b, 2));
+}
+function markIn() { S.pendingIn = editPos(); S.tab = 'vamps'; renderAll(); toast('VAMP 시작 ' + fmt(S.pendingIn, 2) + ' — 끝 지점에서 O'); }
+function markOut() {
+  if (S.pendingIn == null) { toast('먼저 I로 VAMP 시작 지점을 찍어 주세요'); return; }
+  const b = editPos(); const a = S.pendingIn; S.pendingIn = null;
+  if (b <= a) { toast('끝 지점이 시작보다 뒤여야 해요'); renderAll(); return; }
+  addVamp(a, b);
+}
+
+/* ---------- 화면 ---------- */
+function renderAll() { renderList(); renderDeckStatic(); renderEditor(); renderSync(); }
+
+function renderList() {
+  const casts = [...new Set(S.tracks.map(t => t.cast).filter(Boolean))];
+  const chips = $('#castChips');
+  chips.innerHTML = casts.length ? ['전체', ...casts].map(c => `<button class="chip${S.cast === c ? ' on' : ''}" data-cast="${esc(c)}">${esc(c)}</button>`).join('') : '';
+  const v = visible(); const sb = standbyIdx();
+  $('#listCount').textContent = S.tracks.length ? v.length + '곡' : '';
+  const list = $('#trackList');
+  if (!S.tracks.length) { list.innerHTML = '<li class="list-empty">불러온 곡이 없어요.</li>'; return; }
+  list.innerHTML = v.map(i => {
+    const t = S.tracks[i]; const o = tset(t.key);
+    const playing = (P.running || P.paused || P.loading) && P.idx === i;
+    const cls = ['trk', playing ? 'playing' : '', !playing && i === sb ? 'standby' : ''].join(' ');
+    let st = '', stc = '';
+    if (t.state === 'loading') st = Math.round(t.progress * 100) + '%';
+    else if (t.state === 'decoding') st = '…';
+    else if (t.state === 'error') { st = '오류'; stc = 'err'; }
+    else if (t.state === 'cached' || t.state === 'ready') { st = '●'; stc = 'ok'; }
+    const marks = [o.cues.length ? '큐 ' + o.cues.length : '', o.vamps.length ? 'VAMP ' + o.vamps.length : ''].filter(Boolean).join(' · ');
+    const sub = [t.cast, marks].filter(Boolean).join(' · ');
+    return `<li class="${cls}" data-i="${i}" title="${esc(t.err || t.name)}">
+      <span class="no">${esc(t.no || '—')}</span>
+      <span class="ttl"><b>${esc(t.title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
+      <span class="st ${stc}" title="${t.state === 'cached' ? '이 기기에 저장됨' : ''}">${st}</span>
+      <button class="play" data-play="${i}" title="바로 재생" aria-label="${esc(t.title)} 바로 재생">▶</button>
+    </li>`;
+  }).join('');
+}
+
+function renderDeckStatic() {
+  const i = deckIdx(); const t = S.tracks[i];
+  const badge = $('#stateBadge');
+  let cls = 'standby', txt = '대기';
+  if (P.loading) { cls = ''; txt = '불러오는 중'; }
+  else if (P.running) { cls = 'playing'; txt = '재생 중'; }
+  else if (P.paused) { cls = 'paused'; txt = '일시정지'; }
+  else if (!t) { cls = ''; txt = '—'; }
+  badge.className = 'badge ' + cls; badge.textContent = txt; badge.dataset.base = txt;
+  $('#nowNo').textContent = t && t.no ? 'No. ' + t.no : '';
+  $('#nowCast').textContent = t && t.cast ? t.cast : '';
+  $('#nowTitle').textContent = t ? t.title : (S.tracks.length ? '공연 끝 — 목록에서 곡을 선택하세요' : '곡을 선택하세요');
+  $('#nowMemo').textContent = t ? tset(t.key).memo : '';
+  const sb = standbyIdx(); const st = S.tracks[sb];
+  $('#standbyTitle').textContent = (P.running || P.paused || P.loading) ? (st ? (st.no ? st.no + '. ' : '') + st.title + (st.cast ? ' (' + st.cast + ')' : '') : '없음 (마지막 곡)') : '이 곡 (GO를 누르면 재생)';
+  const msg = $('#waveMsg');
+  if (!t) msg.textContent = S.tracks.length ? '' : '';
+  else if (t.state === 'error') msg.textContent = '불러오지 못했어요: ' + (t.err || '');
+  else if (!t.peaks) msg.textContent = t.state === 'loading' ? '드라이브에서 받는 중 ' + Math.round(t.progress * 100) + '%' : '파형 준비 중…';
+  else msg.textContent = '';
+  $('#bPause').firstChild.textContent = P.paused ? '이어서' : '일시정지';
+  document.body.classList.toggle('locked', S.locked);
+  $('#btnLock').classList.toggle('on', S.locked);
+  $('#btnLock').textContent = S.locked ? '공연 모드 켜짐' : '공연 모드';
+  $('#pendingIn').textContent = S.pendingIn != null ? '시작 지점 ' + fmt(S.pendingIn, 2) + ' 찍힘 — 끝에서 O' : '';
+}
+
+function renderEditor() {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === S.tab));
+  ['cues', 'vamps', 'memo'].forEach(n => { $('#pane-' + n).hidden = S.tab !== n; });
+  const k = editKey(); const o = k ? tset(k) : { cues: [], vamps: [], gain: 0, memo: '' };
+  const cues = o.cues.slice().sort((a, b) => a.t - b.t);
+  $('#cueItems').innerHTML = cues.length ? cues.map((c, n) => `
+    <div class="item cue" data-ci="${o.cues.indexOf(c)}">
+      <span class="n">Q${n + 1}</span>
+      <input type="text" class="t" value="${fmt(c.t, 2)}" data-f="t" aria-label="큐 ${n + 1} 시간">
+      <input type="text" class="lab" value="${esc(c.label || '')}" data-f="label" placeholder="이름 (예: 2절 시작)" aria-label="큐 ${n + 1} 이름">
+      <button class="sbtn" data-act="cue-here">현재 위치로</button>
+      <button class="sbtn" data-act="cue-play">▶ 여기서</button>
+      <button class="sbtn del" data-act="cue-del">삭제</button>
+    </div>`).join('') : '<div class="empty-note">아직 큐가 없어요.</div>';
+  const vamps = o.vamps.slice().sort((a, b) => a.a - b.a);
+  $('#vampItems').innerHTML = vamps.length ? vamps.map((v, n) => `
+    <div class="item vmp${v.on === false ? ' off' : ''}" data-vid="${esc(v.id)}">
+      <span class="n">V${n + 1}</span>
+      <input type="text" class="t" value="${fmt(v.a, 2)}" data-f="a" aria-label="VAMP ${n + 1} 시작">
+      <span class="muted">~</span>
+      <input type="text" class="t" value="${fmt(v.b, 2)}" data-f="b" aria-label="VAMP ${n + 1} 끝">
+      <span class="muted mono" style="font-size:12px">${(v.b - v.a).toFixed(2)}초</span>
+      <button class="sbtn" data-act="v-in">시작←현재</button>
+      <button class="sbtn" data-act="v-out">끝←현재</button>
+      <button class="sbtn" data-act="v-play">▶ 미리듣기</button>
+      <button class="sbtn" data-act="v-toggle">${v.on === false ? '켜기' : '끄기'}</button>
+      <button class="sbtn del" data-act="v-del">삭제</button>
+    </div>`).join('') : '<div class="empty-note">아직 VAMP 구간이 없어요.</div>';
+  const mi = $('#memoInput'); if (document.activeElement !== mi) mi.value = o.memo || '';
+  const tgEl = $('#trackGain'); tgEl.value = o.gain || 0; $('#trackGainVal').textContent = (o.gain > 0 ? '+' : '') + (o.gain || 0) + ' dB';
+  const dis = !k; ['#addCue', '#addVamp', '#memoInput', '#trackGain'].forEach(s => $(s).disabled = dis);
+}
+
+/* 매 프레임: 시계, GO 안내, 파형 */
+const wave = $('#wave'); const wctx = wave.getContext('2d');
+let colors = {};
+function readColors() { const cs = getComputedStyle(document.documentElement); ['--wave', '--played', '--amber', '--vamp', '--fg', '--go', '--faint', '--line', '--mono'].forEach(n => colors[n] = cs.getPropertyValue(n).trim()); }
+let hoverX = null, dragging = false;
+function tick() {
+  const i = deckIdx(); const t = S.tracks[i];
+  const p = (i === P.idx) ? pos() : 0;
+  const d = (i === P.idx && P.buf) ? P.buf.duration : (t && t.duration) || 0;
+  $('#tElapsed').textContent = fmt(p, 1);
+  $('#tTotal').textContent = '/ ' + fmt(d, 0);
+  $('#tRemain').textContent = '−' + fmt(Math.max(0, d - p), 0);
+
+  let hint = '', cd = '', cdCls = '';
+  if (!t) hint = S.tracks.length ? '재생할 곡을 선택하세요' : '곡 목록을 불러오세요';
+  else if (P.loading) hint = '불러오는 중…';
+  else if (P.paused) hint = '이어서 재생 (' + fmt(p, 1) + ')';
+  else if (!P.running) hint = '“' + t.title + '” 재생' + (p > 0.05 ? ' — ' + fmt(p, 1) + '부터' : '');
+  else {
+    const vIn = inVamp();
+    const c = nextCue(p);
+    if (vIn) { hint = 'VAMP 해제 → 구간 끝에서 다음으로'; cd = 'VAMP 반복 중'; cdCls = 'vamp'; }
+    else if (c) hint = '큐 ' + c.n + (c.label ? ' “' + c.label + '”' : '') + ' (' + fmt(c.t, 1) + ')로 이동';
+    else hint = '남은 큐 없음';
+    if (!vIn) {
+      const evs = [];
+      if (P.armed && P.armed.a > p) evs.push({ t: P.armed.a, l: 'VAMP까지' });
+      if (c) evs.push({ t: c.t, l: '큐 ' + c.n + '까지' });
+      evs.sort((a, b) => a.t - b.t);
+      if (evs[0]) cd = evs[0].l + ' ' + fmt(evs[0].t - p, 0);
+    }
+  }
+  $('#goHint').textContent = hint;
+  const cdEl = $('#eventCountdown'); cdEl.textContent = cd; cdEl.className = 'mono ' + cdCls;
+  const badge = $('#stateBadge');
+  if (P.running && inVamp()) { badge.className = 'badge vamp'; badge.textContent = 'VAMP'; }
+  else if (P.running && badge.textContent === 'VAMP') { badge.className = 'badge playing'; badge.textContent = '재생 중'; }
+
+  drawWave(t, p, d);
+  requestAnimationFrame(tick);
+}
+function drawWave(t, p, d) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = wave.clientWidth, h = wave.clientHeight;
+  if (wave.width !== Math.round(w * dpr) || wave.height !== Math.round(h * dpr)) { wave.width = Math.round(w * dpr); wave.height = Math.round(h * dpr); }
+  wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  wctx.clearRect(0, 0, w, h);
+  if (!t || !d) return;
+  const X = s => s / d * w;
+  const o = tset(t.key);
+  const isCur = deckIdx() === P.idx;
+  // VAMP 구간
+  o.vamps.forEach((v, n) => {
+    const rel = isCur && P.released.has(v.id);
+    wctx.globalAlpha = v.on === false ? 0.07 : rel ? 0.1 : 0.24;
+    wctx.fillStyle = colors['--vamp']; wctx.fillRect(X(v.a), 0, Math.max(2, X(v.b) - X(v.a)), h);
+    wctx.globalAlpha = v.on === false ? 0.4 : 1;
+    wctx.fillRect(X(v.a), 0, 2, h); wctx.fillRect(X(v.b) - 2, 0, 2, h);
+    wctx.font = '600 11px ' + colors['--mono'];
+    wctx.fillText('V', X(v.a) + 5, h - 8);
+    wctx.globalAlpha = 1;
+  });
+  // 파형
+  if (t.peaks) {
+    const pk = t.peaks, n = pk.length, px = X(p), mid = h / 2;
+    for (let x = 0; x < w; x += 2) {
+      const k0 = Math.floor(x / w * n), k1 = Math.max(k0 + 1, Math.floor((x + 2) / w * n)); let m = 0;
+      for (let k = k0; k < k1 && k < n; k++) if (pk[k] > m) m = pk[k];
+      const a = Math.max(1, m * (h * 0.4));
+      wctx.fillStyle = x < px ? colors['--played'] : colors['--wave'];
+      wctx.fillRect(x, mid - a, 1.4, a * 2);
+    }
+  }
+  // 큐
+  const cues = o.cues.slice().sort((a, b) => a.t - b.t);
+  wctx.font = '600 11px ' + colors['--mono'];
+  cues.forEach((c, n) => {
+    const x = X(c.t);
+    wctx.fillStyle = colors['--amber']; wctx.fillRect(x - 1, 0, 2, h);
+    const lab = String(n + 1); const tw = wctx.measureText(lab).width + 8;
+    wctx.fillRect(x - 1, 0, tw, 16);
+    wctx.fillStyle = '#1a1205'; wctx.fillText(lab, x + 3, 12);
+  });
+  // 재생 위치
+  if (isCur && (P.running || P.paused || p > 0)) {
+    wctx.fillStyle = P.running ? colors['--go'] : colors['--fg'];
+    wctx.fillRect(X(p) - 1, 0, 2, h);
+  }
+  if (hoverX != null && !S.locked) { wctx.fillStyle = colors['--fg']; wctx.globalAlpha = 0.5; wctx.fillRect(hoverX, 0, 1, h); wctx.globalAlpha = 1; }
+}
+function waveTime(ev) {
+  const r = wave.getBoundingClientRect(); const i = deckIdx(); const t = S.tracks[i];
+  const d = (i === P.idx && P.buf) ? P.buf.duration : (t && t.duration) || 0;
+  const x = Math.max(0, Math.min(r.width, ev.clientX - r.left));
+  return { x, t: d ? x / r.width * d : 0, d };
+}
+wave.addEventListener('pointerdown', ev => { if (S.locked) return; dragging = true; wave.setPointerCapture(ev.pointerId); const w = waveTime(ev); hoverX = w.x; showHover(w); });
+wave.addEventListener('pointermove', ev => { if (S.locked) return; const w = waveTime(ev); hoverX = w.x; showHover(w); });
+wave.addEventListener('pointerup', ev => {
+  if (S.locked || !dragging) return; dragging = false; const w = waveTime(ev);
+  if (w.d) { if (deckIdx() !== P.idx) loadDeck(deckIdx()); seek(w.t); }
+  if (ev.pointerType !== 'mouse') { hoverX = null; $('#hoverTime').hidden = true; }
+});
+wave.addEventListener('pointerleave', () => { if (!dragging) { hoverX = null; $('#hoverTime').hidden = true; } });
+wave.addEventListener('pointercancel', () => { dragging = false; hoverX = null; $('#hoverTime').hidden = true; });
+function showHover(w) { const el = $('#hoverTime'); if (!w.d) { el.hidden = true; return; } el.hidden = false; el.textContent = fmt(w.t, 1); el.style.left = Math.max(28, Math.min(wave.clientWidth - 28, w.x)) + 'px'; }
+
+/* ---------- 이벤트 연결 ---------- */
+$('#bGo').addEventListener('click', go);
+$('#bStop').addEventListener('click', stopCmd);
+$('#bPause').addEventListener('click', pause);
+$('#bFade').addEventListener('click', fadeOut);
+$('#bBack').addEventListener('click', () => skip(-S.seekStep));
+$('#bFwd').addEventListener('click', () => skip(S.seekStep));
+$('#vol').addEventListener('input', e => setVol(+e.target.value));
+$('#btnLock').addEventListener('click', () => { S.locked = !S.locked; LS.set('locked', S.locked); renderAll(); toast(S.locked ? '공연 모드: 편집과 파형 이동이 잠겼어요' : '공연 모드 해제'); });
+document.addEventListener('click', e => { const b = e.target.closest('button'); if (b) setTimeout(() => b.blur(), 0); });
+
+$('#castChips').addEventListener('click', e => {
+  const b = e.target.closest('[data-cast]'); if (!b) return;
+  S.cast = b.dataset.cast; LS.set('cast', S.cast);
+  if (!P.running && !P.paused && !visible().includes(S.sel)) { const v = visible(); S.sel = v.length ? v[0] : -1; loadDeck(S.sel); }
+  renderAll();
+});
+$('#trackList').addEventListener('click', e => {
+  const pb = e.target.closest('[data-play]');
+  if (pb) { e.stopPropagation(); playNow(+pb.dataset.play); return; }
+  const li = e.target.closest('[data-i]'); if (!li) return;
+  selectStandby(+li.dataset.i);
+});
+$('#trackList').addEventListener('dblclick', e => { const li = e.target.closest('[data-i]'); if (li && !S.locked) playNow(+li.dataset.i); });
+
+document.querySelector('.tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) { S.tab = b.dataset.tab; renderEditor(); } });
+$('#addCue').addEventListener('click', () => addCue());
+$('#addVamp').addEventListener('click', () => addVamp(editPos()));
+$('#cueItems').addEventListener('change', e => {
+  const row = e.target.closest('[data-ci]'); if (!row) return; const o = tset(editKey(), true); const c = o.cues[+row.dataset.ci]; if (!c) return;
+  if (e.target.dataset.f === 't') { const v = parseTime(e.target.value); if (isFinite(v)) c.t = +v.toFixed(2); else toast('시간은 1:23.45 형식으로 입력하세요'); }
+  else c.label = e.target.value.trim();
+  afterEdit();
+});
+$('#cueItems').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); const row = e.target.closest('[data-ci]'); if (!b || !row) return;
+  const o = tset(editKey(), true); const ci = +row.dataset.ci; const c = o.cues[ci]; if (!c) return;
+  if (b.dataset.act === 'cue-del') { o.cues.splice(ci, 1); afterEdit(); }
+  else if (b.dataset.act === 'cue-here') { c.t = +editPos().toFixed(2); afterEdit(); }
+  else if (b.dataset.act === 'cue-play') { const k = deckIdx(); if (P.running && P.idx === k) startAt(c.t); else playTrack(k, c.t); }
+});
+$('#vampItems').addEventListener('change', e => {
+  const row = e.target.closest('[data-vid]'); if (!row) return; const o = tset(editKey(), true); const v = o.vamps.find(x => x.id === row.dataset.vid); if (!v) return;
+  const val = parseTime(e.target.value); if (!isFinite(val)) { toast('시간은 1:23.45 형식으로 입력하세요'); renderEditor(); return; }
+  v[e.target.dataset.f] = +val.toFixed(3);
+  if (v.b <= v.a) { toast('끝 지점이 시작보다 뒤여야 해요'); }
+  afterEdit();
+});
+$('#vampItems').addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); const row = e.target.closest('[data-vid]'); if (!b || !row) return;
+  const o = tset(editKey(), true); const k = o.vamps.findIndex(x => x.id === row.dataset.vid); const v = o.vamps[k]; if (!v) return;
+  const act = b.dataset.act, here = +editPos().toFixed(3);
+  if (act === 'v-del') o.vamps.splice(k, 1);
+  else if (act === 'v-in') { if (here >= v.b) { toast('시작은 끝보다 앞이어야 해요'); return; } v.a = here; }
+  else if (act === 'v-out') { if (here <= v.a) { toast('끝은 시작보다 뒤여야 해요'); return; } v.b = here; }
+  else if (act === 'v-toggle') v.on = v.on === false;
+  else if (act === 'v-play') { P.released.delete(v.id); const from = Math.max(0, v.a - 2); const di = deckIdx(); afterEdit(); if (P.running && P.idx === di) startAt(from); else playTrack(di, from); return; }
+  afterEdit();
+});
+let memoTimer;
+$('#memoInput').addEventListener('input', e => { const k = editKey(); if (!k) return; tset(k, true).memo = e.target.value; clearTimeout(memoTimer); memoTimer = setTimeout(() => { saveSettings(k); renderDeckStatic(); }, 400); });
+$('#trackGain').addEventListener('input', e => { const k = editKey(); if (!k) return; const o = tset(k, true); o.gain = +e.target.value; $('#trackGainVal').textContent = (o.gain > 0 ? '+' : '') + o.gain + ' dB'; if (deckIdx() === P.idx && !P.fading) applyTrackGain(); });
+$('#trackGain').addEventListener('change', () => saveSettings(editKey()));
+
+/* 단축키 */
+function isTyping(el) { if (!el) return false; const tag = el.tagName; if (tag === 'TEXTAREA') return true; if (tag === 'INPUT') return !['range', 'checkbox', 'button'].includes(el.type); return el.isContentEditable; }
+window.addEventListener('keydown', e => {
+  const typing = isTyping(e.target);
+  if (e.key === 'Escape') {
+    if ($('#dlg').open) return;
+    if (typing) e.target.blur();
+    e.preventDefault(); stopCmd(); return;
+  }
+  if (typing || $('#dlg').open) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  if (e.code === 'Space' || k === ' ') { e.preventDefault(); if (!e.repeat) go(); return; }
+  if (k === 'ArrowLeft') { e.preventDefault(); skip(e.shiftKey ? -1 : -S.seekStep); return; }
+  if (k === 'ArrowRight') { e.preventDefault(); skip(e.shiftKey ? 1 : S.seekStep); return; }
+  if (k === 'ArrowUp') { e.preventDefault(); moveStandby(-1); return; }
+  if (k === 'ArrowDown') { e.preventDefault(); moveStandby(1); return; }
+  if (k === 'Enter') { e.preventDefault(); if (!e.repeat) playNow(standbyIdx()); return; }
+  if (e.repeat) return;
+  // 한글 입력 상태에서도 동작하도록 물리 키 위치(e.code)로 판단
+  const c = e.code || '';
+  if (c === 'KeyP') { pause(); return; }
+  if (c === 'KeyF') { fadeOut(); return; }
+  if (c === 'Minus' || c === 'NumpadSubtract') { setVol(S.vol - 5); return; }
+  if (c === 'Equal' || c === 'NumpadAdd') { setVol(S.vol + 5); return; }
+  const dm = c.match(/^(?:Digit|Numpad)([1-9])$/);
+  if (dm) { jumpCue(+dm[1]); return; }
+  if (S.locked || !canEdit()) return;
+  if (c === 'KeyQ') { addCue(); return; }
+  if (c === 'KeyI') { markIn(); return; }
+  if (c === 'KeyO') { markOut(); return; }
+});
+window.addEventListener('keyup', e => { if ((e.code === 'Space' || e.key === ' ') && !isTyping(e.target)) e.preventDefault(); });
+
+/* 설정 창 */
+const dlg = $('#dlg');
+$('#btnSettings').addEventListener('click', () => {
+  $('#optKey').value = LS.get('apiKey', '') || CONFIG.API_KEY;
+  $('#optFolder').value = folderId();
+  $('#optSeek').value = S.seekStep; $('#optFade').value = S.fadeSec;
+  $('#optServer').value = syncURL(); $('#optPw').value = SYNC.pw;
+  $('#pwStatus').textContent = syncOn() ? (SYNC.ok ? '편집 가능' : '보기 전용') : '';
+  updateCacheStatus();
+  dlg.showModal();
+});
+$('#dlgClose').addEventListener('click', () => dlg.close());
+dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); });
+$('#optSeek').addEventListener('change', e => { const v = Math.max(1, Math.min(30, +e.target.value || 5)); S.seekStep = v; LS.set('seek', v); $('#bBack').firstChild.textContent = '−' + v + '초'; $('#bFwd').firstChild.textContent = '+' + v + '초'; });
+$('#optFade').addEventListener('change', e => { const v = Math.max(0.5, Math.min(15, +e.target.value || 3)); S.fadeSec = v; LS.set('fade', v); });
+function folderFromInput(v) { v = v.trim(); const m = v.match(/folders\/([\w-]+)/) || v.match(/[?&]id=([\w-]+)/); return m ? m[1] : v; }
+$('#optReload').addEventListener('click', () => {
+  const key = $('#optKey').value.trim(); const f = folderFromInput($('#optFolder').value);
+  LS.set('apiKey', key === CONFIG.API_KEY ? '' : key);
+  LS.set('folder', f === CONFIG.FOLDER_ID ? '' : f);
+  dlg.close(); hardStop(); decoded.clear(); loadDrive();
+});
+$('#setupSave').addEventListener('click', () => { const key = $('#setupKey').value.trim(); if (!key) { $('#setupErr').textContent = 'API 키를 입력해 주세요.'; return; } LS.set('apiKey', key === CONFIG.API_KEY ? '' : key); loadDrive(); });
+$('#setupLocal').addEventListener('click', () => $('#fileLocal').click());
+$('#optLocal').addEventListener('click', () => { dlg.close(); $('#fileLocal').click(); });
+$('#fileLocal').addEventListener('change', e => { openLocal(e.target.files); e.target.value = ''; });
+
+$('#optExport').addEventListener('click', () => {
+  const data = JSON.stringify({ app: 'mr-cue-deck', updated: S.settings.updated || Date.now(), tracks: S.settings.tracks }, null, 2);
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
+  a.download = CONFIG.CUE_FILE_NAME; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(CONFIG.CUE_FILE_NAME + ' 저장됨 — 드라이브 MR 폴더에 올려 주세요', 3500);
+});
+$('#optImport').addEventListener('click', () => $('#fileImport').click());
+$('#fileImport').addEventListener('change', e => { const f = e.target.files[0]; if (f) importSettingsFile(f); e.target.value = ''; });
+function importSettingsFile(f) {
+  f.text().then(txt => {
+    const j = JSON.parse(txt); if (!j || typeof j.tracks !== 'object') throw new Error('형식이 맞지 않아요');
+    if (!canEdit()) throw new Error('공유 큐를 바꾸려면 편집 비밀번호가 필요해요');
+    S.settings = { updated: j.updated || Date.now(), tracks: j.tracks }; LS.set('settings', S.settings);
+    Object.keys(S.settings.tracks).forEach(k => markDirty(k)); LS.set('settings', S.settings);
+    if (P.running) armVamp(); renderAll(); toast('큐·VAMP 설정을 가져왔어요');
+  }).catch(err => toast('가져오지 못했어요: ' + err.message, 3500));
+}
+$('#optDriveCues').addEventListener('click', () => { if (syncOn()) { pullCues(false); return; } if (S.source !== 'drive') { toast('드라이브에 연결된 상태에서만 쓸 수 있어요'); return; } loadDriveCues(true); });
+$('#optPwSave').addEventListener('click', async () => {
+  const u = $('#optServer').value.trim();
+  LS.set('cueServer', u === CONFIG.CUE_SERVER_URL ? '' : u);
+  const pw = $('#optPw').value;
+  $('#pwStatus').textContent = '확인 중…';
+  if (!syncOn()) { $('#pwStatus').textContent = '서버 주소가 없어요'; SYNC.ok = false; renderAll(); return; }
+  await pullCues(false);
+  const ok = pw ? await verifyPw(pw, true) : false;
+  if (!pw) { SYNC.ok = false; SYNC.pw = ''; LS.set('pw', ''); renderAll(); }
+  $('#pwStatus').textContent = ok ? '편집 가능' : (pw ? '비밀번호가 맞지 않아요' : '보기 전용으로 연결됨');
+});
+
+function updateCacheStatus() {
+  if (S.source !== 'drive') { $('#cacheStatus').textContent = '이 기기 파일을 쓰는 중이라 따로 저장할 필요가 없어요.'; return; }
+  const n = S.tracks.filter(t => S.cached.has(t.cacheKey)).length;
+  $('#cacheStatus').textContent = '저장됨 ' + n + ' / ' + S.tracks.length + '곡';
+}
+let caching = false;
+$('#optCacheAll').addEventListener('click', async () => {
+  if (S.source !== 'drive' || caching) return;
+  caching = true;
+  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (e) {}
+  let fail = 0;
+  for (let k = 0; k < S.tracks.length; k++) {
+    const t = S.tracks[k];
+    $('#cacheStatus').textContent = '저장 중 ' + (k + 1) + ' / ' + S.tracks.length + ' · ' + t.title;
+    try { await getBytes(t); } catch (e) { fail++; t.state = 'error'; t.err = e.message; }
+    queueListRender();
+  }
+  caching = false;
+  updateCacheStatus();
+  toast(fail ? fail + '곡을 저장하지 못했어요' : '모든 곡을 이 기기에 저장했어요', 3000);
+});
+$('#optClearCache').addEventListener('click', async () => {
+  await IDB.clear(); S.cached.clear();
+  S.tracks.forEach(t => { if (t.state === 'cached') t.state = decoded.has(t.uid) ? 'ready' : 'idle'; });
+  updateCacheStatus(); renderList(); toast('저장된 곡을 지웠어요');
+});
+
+/* ---------- 시작 ---------- */
+readColors();
+setVol(S.vol);
+$('#bBack').firstChild.textContent = '−' + S.seekStep + '초';
+$('#bFwd').firstChild.textContent = '+' + S.seekStep + '초';
+renderAll();
+requestAnimationFrame(tick);
+loadDrive();
+if (syncOn() && SYNC.pw) verifyPw(SYNC.pw, true);
+window.addEventListener('beforeunload', e => { if (P.running || SYNC.dirty.size) { e.preventDefault(); e.returnValue = ''; } });
+</script>
+</body>
+</html>
